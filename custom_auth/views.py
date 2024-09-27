@@ -5,7 +5,8 @@ from rest_framework.permissions import AllowAny
 from django.contrib.auth import get_user_model
 from django.db.models import Q
 from rest_framework_simplejwt.tokens import RefreshToken
-import requests
+from google.oauth2 import id_token
+from google.auth.transport import requests as google_requests
 from .serializers import UserSerializer
 from .utils import logout_user_from_other_devices
 
@@ -60,19 +61,16 @@ class GoogleLoginView(APIView):
     permission_classes = [AllowAny]
     
     def post(self, request):
-        access_token = request.data.get('access_token')
-        if not access_token:
-            return Response({'error': 'Access token is required'}, status=status.HTTP_400_BAD_REQUEST)
+        id_token_str = request.data.get('id_token')
+        if not id_token_str:
+            return Response({'error': 'ID token is required'}, status=status.HTTP_400_BAD_REQUEST)
         
         try:
-            user_info_response = requests.get(
-                'https://www.googleapis.com/oauth2/v3/userinfo',
-                headers={"Authorization": f"Bearer {access_token}"}
-            )
-            user_info_response.raise_for_status()
-            user_info = user_info_response.json()
+            # will set to os.environ.get('GOOGLE_CLIENT_ID') in future
+            CLIENT_ID = '76922283431-11olbqs5uu5fmq37m33svsrlam19pnt5.apps.googleusercontent.com'
+            id_info = id_token.verify_oauth2_token(id_token_str, google_requests.Request(), CLIENT_ID)
             
-            user, created = User.objects.get_or_create(email=user_info['email'], defaults={'username': user_info['name']})
+            user, created = User.objects.get_or_create(email=id_info['email'], defaults={'username': id_info.get('name')})
             
             if created:
                 user.set_unusable_password()
@@ -87,11 +85,11 @@ class GoogleLoginView(APIView):
                 'access': str(refresh.access_token),
             }, status=status.HTTP_200_OK)
             
-        except requests.RequestException as e:
-            return Response({'error': 'Failed to fetch user info from Google'}, status=status.HTTP_400_BAD_REQUEST)
+        except ValueError:
+            return Response({'error': 'Invalid ID token'}, status=status.HTTP_400_BAD_REQUEST)
         
         except KeyError:
-            return Response({'error': 'Invalid user info received from Google'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': 'Invalid user info received from ID token'}, status=status.HTTP_400_BAD_REQUEST)
 
 class Home(APIView):
     def get(self, request):
